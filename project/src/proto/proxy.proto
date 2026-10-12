@@ -1,0 +1,570 @@
+// Copyright 2015 gRPC authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package proxy_proto;
+
+// The greeting service definition.
+service proxyService {
+  // Sends a greeting
+  rpc checkalive (CheckaliveCMD) returns (RequestResult);
+
+  // encode and set
+  rpc encodeAndSetObject(ObjectAndPlacement) returns (SetReply);
+  // get and decode
+  rpc decodeAndGetObject(ObjectAndPlacement) returns (GetReply);
+  // degraded read
+  rpc degradedRead(DegradedReadRequest) returns (DegradedReadReply);
+  rpc degradedRead2Client(RecoveryRequest) returns (DegradedReadReply);
+  rpc degradedReadBreakdown(DegradedReadRequest) returns (DegradedReadReply);
+  rpc degradedRead2ClientBreakdown(RecoveryRequest) returns (DegradedReadReply);
+  rpc degradedReadWithBlockStripeID(DegradedReadRequest) returns (GetReply);
+  rpc partialDecoding(PartialDecodingRequest) returns (DegradedReadReply);
+  // recovery
+  rpc recovery(RecoveryRequest) returns (RecoveryReply);
+  rpc recoveryBreakdown(RecoveryRequest) returns (RecoveryReply);
+  rpc multipleRecovery(MultipleRecoveryRequest) returns (GetReply);
+  // delete
+  rpc deleteBlock(NodeAndBlock) returns (DelReply);
+  // append
+  rpc scheduleAppend2Datanode(AppendStripeDataPlacement) returns (SetReply);
+  // UpLRC：客户端下发新数据；proxy 读旧、异或得 Δ、写新数据，Δ 暂存于本 cluster 的 datanode
+  rpc scheduleUpLRCDataUpdate(UpLRCDataUpdatePlacement) returns (SetReply);
+  rpc scheduleUpLRCLocalParityApply(UpLRCLocalParityBundle) returns (SetReply);
+  rpc uplrcLpHubSessionBegin(UpLRCLpHubSessionBegin) returns (SetReply);
+  rpc uplrcLpHubPartialPush(UpLRCLpHubPartialPush) returns (SetReply);
+  rpc uplrcLpComputePartialAndPush(UpLRCLpComputePartialAndPush) returns (SetReply);
+  rpc uplrcLpApplyParityDelta(UpLRCLpParityApplyDelta) returns (SetReply);
+  // UpLRC：下发算法二生成的跨 proxy 传输计划（train_route + timeslot_schedule 的可序列化形式）
+  rpc scheduleUpLRCTransferPlan(UpLRCTransferPlan) returns (SetReply);
+  rpc uplrcPlanStartExecution(UpLRCPlanKeyMsg) returns (SetReply);
+  rpc uplrcPlanJoinExecution(UpLRCPlanKeyMsg) returns (SetReply);
+  // UpLRC 跨 proxy：收集器聚合数据增量 / 校验块 XOR 落盘 / MST 转发数据增量
+  rpc uplrcPlanCollectorIngestDataDelta(UpLRCPlanCollectorIngestReq) returns (SetReply);
+  rpc uplrcPlanApplyParityXorDelta(UpLRCPlanApplyParityXorReq) returns (SetReply);
+  rpc uplrcPlanMstDataDeltaChunk(UpLRCPlanMstDataDeltaReq) returns (SetReply);
+  // get stripe
+  rpc getBlocks(StripeAndBlockIDs) returns (GetReply);
+}
+
+// parity block recalculation
+message locationInfo {
+  int32 cluster_id = 1;
+  string proxy_ip = 2;
+  int32 proxy_port = 3;
+  repeated string datanodeip = 4;
+  repeated int32 datanodeport = 5;
+  repeated string blockkeys = 6;
+  repeated int32 blockids = 7;
+}
+
+message mainRecalPlan {
+  bool type = 1;  // to distinguish local and global
+  bool if_partial_decoding = 2;
+  repeated locationInfo clusters = 3;
+  repeated string p_datanodeip = 4;
+  repeated int32 p_datanodeport = 5;
+  repeated string p_blockkeys = 6;
+  int32 k = 7;
+  int32 l = 8;
+  int32 g_m = 9;
+  int32 block_size = 10;
+  int32 encodetype = 11;
+  int32 stripe_id = 12;
+  int32 group_id = 13;
+}
+
+message RecalReply {
+  string result = 1;
+}
+
+message helpRecalPlan {
+  bool type = 1;
+  bool if_partial_decoding = 2;
+  string mainproxyip = 3;
+  int32 mainproxyport = 4;
+  repeated string datanodeip = 5;
+  repeated int32 datanodeport = 6;
+  repeated string blockkeys = 7;
+  int32 block_size = 8;
+  repeated int32 blockids = 9;
+  int32 parity_num = 10;
+  int32 k = 11;
+  int32 encodetype = 12;
+}
+
+// block relocation
+message blockRelocPlan {
+  repeated string blocktomove = 1;
+  repeated string fromdatanodeip = 2;
+  repeated int32 fromdatanodeport = 3;
+  repeated string todatanodeip = 4;
+  repeated int32 todatanodeport = 5;
+  int32 block_size = 6;
+}
+
+message blockRelocReply {
+  string result = 1;
+}
+
+message AskIfSuccess {
+  int32 step = 1;
+}
+
+message RepIfSuccess {
+  bool ifsuccess = 1;
+}
+
+// delete
+message NodeAndBlock {
+  repeated string blockkeys = 1;
+  repeated string datanodeip = 2;
+  repeated int32 datanodeport = 3;
+  int32 stripe_id = 4;
+  string key = 5;
+}
+
+message DelReply {
+  bool ifcommit = 1;
+}
+
+// The request message containing the user's name.
+message CheckaliveCMD {
+  string name = 1;
+}
+
+// The response message containing the greetings
+message RequestResult {
+  bool message = 1;
+}
+
+// set and get
+message ObjectAndPlacement{
+  string key = 1;
+  int32 valuesizebyte = 2;
+  int32 k = 3;
+  int32 l = 4;
+  int32 g_m = 5;
+  int32 stripe_id = 6;
+  repeated string datanodeip = 7;
+  repeated int32 datanodeport = 8;
+  repeated string blockkeys = 9;
+  repeated int32 blockids = 10;
+  int32 block_size = 11;
+  int32 encode_type = 12;
+  string clientip = 13;
+  int32 clientport = 14;
+}
+
+// degraded read
+message DegradedReadRequest{
+  string clientip = 1;
+  int32 clientport = 2;
+  int32 failed_block_id = 3;
+  int32 failed_block_stripe_id = 4;
+  string failed_block_key = 5;
+  repeated string datanodeip = 6;
+  repeated int32 datanodeport = 7;
+  repeated string blockkeys = 8;
+  repeated int32 blockids = 9;
+}
+
+message PartialDecodingRequest{
+  string dest_ip = 1;
+  int32 dest_port = 2;
+  repeated int32 source_block_ids = 3;
+  repeated string source_block_keys = 4;
+  repeated string source_datanode_ips = 5;
+  repeated int32 source_datanode_ports = 6;
+  int32 decode_num = 7;
+  repeated int32 decode_factors = 8;
+}
+
+message DegradedReadReply {
+  double disk_io_start_time = 1;
+  double disk_io_end_time = 2;
+  double network_start_time = 3;
+  double network_end_time = 4;
+  double decode_start_time = 5;
+  double decode_end_time = 6;
+  double cross_rack_time = 7;
+  double cross_rack_xor_time = 8;
+  double grpc_start_time = 9;
+  double data_node_grpc_notify_time = 10;
+  double data_node_grpc_start_time = 11;
+}
+
+// recovery
+message RecoveryRequest{
+  string replaced_node_ip = 1;
+  int32 replaced_node_port = 2;
+  int32 failed_block_id = 3;
+  string failed_block_key = 4;
+  int32 cross_rack_num = 5;
+  repeated string datanodeip = 6;
+  repeated int32 datanodeport = 7;
+  repeated string blockkeys = 8;
+  repeated int32 blockids = 9;
+  repeated string proxyip = 10;
+  repeated int32 proxyport = 11;
+  bool is_to_send_block_id = 12;
+  int32 block_id_to_send = 13;
+}
+
+message MultipleRecoveryRequest{
+  string replacing_node_ip = 1;
+  int32 replacing_node_port = 2;
+  repeated int32 failed_block_ids = 3;
+  repeated string failed_block_keys = 4;
+  int32 cross_rack_num = 5;
+}
+
+message RecoveryReply {
+  double disk_io_start_time = 1;
+  double disk_io_end_time = 2;
+  double network_start_time = 3;
+  double network_end_time = 4;
+  double decode_start_time = 5;
+  double decode_end_time = 6;
+  double cross_rack_time = 7;
+  double cross_rack_xor_time = 8;
+  double grpc_start_time = 9;
+  double data_node_grpc_notify_time = 10;
+  double data_node_grpc_start_time = 11;
+  double dest_data_node_network_time = 12;
+  double dest_data_node_disk_io_time = 13;
+  
+}
+
+// append
+message AppendStripeDataPlacement{
+  string key = 1;
+  int32 cluster_id = 2;
+  int32 stripe_id = 3;
+  // sum of all append slices within the cluster
+  uint64 append_size = 4;
+  repeated string datanodeip = 5;
+  repeated int32 datanodeport = 6;
+  repeated string blockkeys = 7;
+  repeated int32 blockids = 8;
+  // physical offset of each append slice within each block
+  repeated uint64 offsets = 9;
+  repeated uint64 sizes = 10;
+  bool is_merge_parity = 11;
+  string append_mode = 12;
+  bool is_serialized = 13;
+  
+  // === 单入口转发模式（Single Proxy Entry + Forwarding）===
+  // 如果为 true，表示此 proxy 是主入口，负责接收 client 数据并转发给其他 proxy
+  bool is_main_entry = 14;
+  // 转发目标 proxy 的信息（仅当 is_main_entry=true 时有效）
+  repeated string forward_proxy_ips = 15;
+  repeated int32 forward_proxy_ports = 16;
+  repeated int32 forward_cluster_ids = 17;  // 仅用于日志/调试
+}
+
+// 算法二链路类型，与 uplrc_alg2::TrainLinkKind 一致
+enum UpLRCTransferLinkKind {
+  UPLRC_TRANSFER_STAR_DATA_TO_CENTER = 0;
+  UPLRC_TRANSFER_STAR_CENTER_TO_GLOBAL = 1;
+  UPLRC_TRANSFER_STAR_CENTER_TO_LOCAL = 2;
+  UPLRC_TRANSFER_MST_FORWARD = 3;
+  // class3 并发：data 机架编码 local parity ΔP 后直发 local 机架
+  UPLRC_TRANSFER_STAR_DATA_TO_LOCAL = 4;
+}
+
+// 与 uplrc_alg2::UpLRCDeltaPayloadKind 一致：线上是数据增量还是校验增量
+enum UpLRCDeltaPayloadKind {
+  UPLRC_DELTA_DATA = 0;
+  UPLRC_DELTA_PARITY = 1;
+}
+
+message UpLRCTransferClusterEndpoint {
+  int32 cluster_id = 1;
+  string proxy_ip = 2;
+  int32 proxy_port = 3;
+}
+
+message UpLRCTransferBlockPlacement {
+  int32 block_id = 1;
+  string block_key = 2;
+  string datanode_ip = 3;
+  int32 datanode_port = 4;
+}
+
+message UpLRCTransferDeltaBlobRef {
+  int32 cluster_id = 1;
+  string uplrc_plan_key = 2;
+  string delta_blob_key = 3;
+  string delta_datanode_ip = 4;
+  int32 delta_datanode_port = 5;
+}
+
+// 相交集一组内，收集器按字节 XOR 合并数据增量时的缓冲区长度（取组内各数据链路 payload 上界）
+message UpLRCTransferGroupXorHint {
+  int32 group_index = 1;
+  uint64 xor_accum_byte_length = 2;
+}
+
+// 每个 cluster 上 uplrc delta 拼接 blob 内，各数据块增量区间的起点与长度（与 notify uplrc_update 顺序一致）
+message UpLRCTransferClusterDeltaLayout {
+  int32 cluster_id = 1;
+  repeated int32 data_block_ids = 2;
+  repeated uint64 delta_base_offset = 3;
+  repeated uint64 delta_total_length = 4;
+}
+
+// 单条传输步骤（对应一次时隙内选中的一条 train_route 链路片段）
+message UpLRCTransferStep {
+  int32 step_index = 1;
+  int32 src_proxy_cluster_id = 2;
+  int32 dst_proxy_cluster_id = 3;
+  int32 src_block_id = 4;
+  int32 dst_block_id = 5;
+  uint64 payload_bytes = 6;
+  UpLRCTransferLinkKind link_kind = 7;
+  uint32 scheduled_slot = 8;
+  int32 depends_on_step_index = 9;
+  double estimated_transfer_sec = 10;
+  int32 group_index = 11;
+  UpLRCDeltaPayloadKind delta_payload_kind = 12;
+  uint64 chunk_byte_offset = 13;
+  uint64 chunk_byte_length = 14;
+  // 仅 STAR_CENTER_TO_LOCAL 且矩阵/合并语义：只使用 map2group==该值的数据块增量参与编码；不设置则扇出用全量收集缓冲
+  optional int32 parity_ingest_stripe_group = 15;
+  // |N|=1 MST：载荷恒为原始数据块 d 的增量；中继 hop 的 src_block_id 可能为校验块
+  optional int32 mst_origin_data_block_id = 16;
+  // 非空：STAR_CENTER 校验扇出合并跨度/XOR 仅含这些数据块（与算法三 collector 子集一致）；空则按 parity_ingest_stripe_group 全组
+  repeated int32 parity_merge_data_block_ids = 17;
+}
+
+message UpLRCBlockStripeGroup {
+  int32 block_id = 1;
+  int32 stripe_group = 2;
+}
+
+// 本次 UpLRC 更新中各数据块在块内的半开区间 [lo, hi_excl)（与 coordinator block_intervals 一致）；
+// 供 proxy 将「合并校验跨度」内的逻辑字节偏移映射到 ingest 缓冲区内的 packed 下标。
+message UpLRCBlockHalfOpenSeg {
+  int32 block_id = 1;
+  int32 lo = 2;
+  int32 hi_excl = 3;
+}
+
+// LRC 矩阵编码条带（与 coordinator build_slice_plan + lrc_make_matrix 一致）
+message UpLRCTransferEncodeMeta {
+  int32 encode_type = 1;         // ECProject::EncodeType
+  int32 k = 2;
+  int32 g_m = 3;
+  int32 l = 4;
+  int32 parity_slice_offset = 5;
+  int32 parity_slice_size = 6;
+}
+
+// 每个收集器期望收到的数据块增量（按块分缓冲，供矩阵乘）
+message UpLRCCollectorIngressExpect {
+  int32 group_index = 1;
+  int32 collector_block_id = 2;
+  repeated int32 src_data_block_ids = 3;
+  repeated uint64 src_delta_total_bytes = 4;
+}
+
+// 各数据块在本次更新中相对于校验条带的切片（块内 [slice_offset, slice_offset+slice_len)）
+message UpLRCDataStripDesc {
+  int32 block_id = 1;
+  int32 slice_offset = 2;
+  int32 slice_len = 3;
+}
+
+message UpLRCPlanKeyMsg {
+  string plan_key = 1;
+}
+
+message UpLRCIngressCacheRef {
+  int32 cluster_id = 1;
+  string append_key = 2;
+}
+
+message UpLRCTransferPlan {
+  int32 stripe_id = 1;
+  string plan_key = 2;
+  uint32 total_rounds = 3;
+  repeated UpLRCTransferStep steps = 4;
+  int32 slot_unit_bytes = 5;
+  int32 k_datablock = 6;
+  repeated UpLRCTransferClusterEndpoint cluster_endpoints = 7;
+  repeated UpLRCTransferBlockPlacement block_placements = 8;
+  repeated UpLRCTransferDeltaBlobRef delta_blob_refs = 9;
+  repeated UpLRCTransferGroupXorHint group_xor_hints = 10;
+  repeated UpLRCTransferClusterDeltaLayout cluster_delta_layouts = 11;
+  UpLRCTransferEncodeMeta uplrc_encode_meta = 12;
+  repeated UpLRCCollectorIngressExpect uplrc_collector_expects = 13;
+  repeated UpLRCDataStripDesc uplrc_data_strip_descs = 14;
+  repeated UpLRCBlockStripeGroup uplrc_block_stripe_groups = 15;
+  repeated UpLRCBlockHalfOpenSeg uplrc_block_delta_segs = 16;
+  repeated UpLRCIngressCacheRef ingress_cache_refs = 17;
+}
+
+message UpLRCPlanCollectorIngestReq {
+  string plan_key = 1;
+  int32 group_index = 2;
+  int32 collector_block_id = 3;
+  uint64 chunk_byte_offset = 4;
+  bytes chunk_payload = 5;
+  uint64 xor_accum_byte_length = 6;
+  int32 src_data_block_id = 7;
+}
+
+message UpLRCPlanApplyParityXorReq {
+  string plan_key = 1;
+  int32 dst_block_id = 2;
+  string block_key = 3;
+  string datanode_ip = 4;
+  int32 datanode_port = 5;
+  int32 parity_slice_offset = 6;
+  int32 parity_slice_length = 7;
+  bytes parity_delta_payload = 8;
+}
+
+message UpLRCPlanMstDataDeltaReq {
+  string plan_key = 1;
+  int32 dst_proxy_cluster_id = 2;
+  int32 dst_block_id = 3;
+  int32 k_datablock = 4;
+  uint64 chunk_byte_offset = 5;
+  bytes chunk_payload = 6;
+  uint64 total_expected_bytes = 7;
+  string parity_block_key = 8;
+  string parity_datanode_ip = 9;
+  int32 parity_datanode_port = 10;
+  int32 src_data_block_id = 11;
+}
+
+message UpLRCIngressParityWrite {
+  int32 block_id = 1;
+  string block_key = 2;
+  string datanode_ip = 3;
+  int32 datanode_port = 4;
+  int32 stripe_group = 5;
+}
+
+message UpLRCDataUpdatePlacement {
+  string key = 1;
+  int32 cluster_id = 2;
+  int32 stripe_id = 3;
+  uint64 update_payload_size = 4;
+  repeated string datanodeip = 5;
+  repeated int32 datanodeport = 6;
+  repeated string blockkeys = 7;
+  repeated int32 blockids = 8;
+  repeated uint64 offsets = 9;
+  repeated uint64 sizes = 10;
+  string delta_blob_key = 11;
+  string delta_datanode_ip = 12;
+  int32 delta_datanode_port = 13;
+  // UpLRC class 算法：ingress 机架内校验更新 / 缓存（由 coordinator 填写）
+  repeated UpLRCIngressParityWrite uplrc_ingress_local_parity_writes = 14;
+  repeated UpLRCIngressParityWrite uplrc_ingress_global_parity_writes = 15;
+  repeated int32 uplrc_ingress_cache_lp_stripe_groups = 16;
+}
+
+message UpLRCLpDeltaFetch {
+  string blob_key = 1;
+  string datanode_ip = 2;
+  int32 datanode_port = 3;
+  uint64 blob_offset = 4;
+  uint64 read_len = 5;
+  int32 acc_offset = 6;
+}
+
+message UpLRCLpWorkItem {
+  int32 local_block_id = 1;
+  string local_block_key = 2;
+  string local_datanode_ip = 3;
+  int32 local_datanode_port = 4;
+  int32 parity_slice_offset = 5;
+  int32 parity_slice_size = 6;
+  repeated UpLRCLpDeltaFetch fetches = 7;
+}
+
+message UpLRCLocalParityBundle {
+  string key = 1;
+  int32 stripe_id = 2;
+  repeated UpLRCLpWorkItem items = 3;
+}
+
+message UpLRCLpHubSessionBegin {
+  string session_key = 1;
+  int32 expected_partials = 2;
+  int32 parity_slice_size = 3;
+  int32 parity_slice_offset = 4;
+  int32 local_block_id = 5;
+  string local_block_key = 6;
+  string local_datanode_ip = 7;
+  int32 local_datanode_port = 8;
+  string dest_lp_proxy_ip = 9;
+  int32 dest_lp_proxy_port = 10;
+  int32 stripe_id = 11;
+  int32 hub_global_block_id = 12;
+}
+
+message UpLRCLpHubPartialPush {
+  string session_key = 1;
+  bytes partial_payload = 2;
+}
+
+message UpLRCLpComputePartialAndPush {
+  string session_key = 1;
+  string hub_proxy_ip = 2;
+  int32 hub_proxy_port = 3;
+  string delta_blob_key = 4;
+  string delta_datanode_ip = 5;
+  int32 delta_datanode_port = 6;
+  int32 parity_slice_size = 7;
+  repeated UpLRCLpDeltaFetch fetches = 8;
+}
+
+message UpLRCLpParityApplyDelta {
+  int32 stripe_id = 1;
+  int32 local_block_id = 2;
+  string local_block_key = 3;
+  string local_datanode_ip = 4;
+  int32 local_datanode_port = 5;
+  int32 parity_slice_offset = 6;
+  int32 parity_slice_size = 7;
+  bytes delta_payload = 8;
+}
+
+message SetReply {
+  bool ifcommit = 1;
+  // uplrcPlanJoinExecution：本 proxy 纯传输窗口（与 pure_xfer_wall_sec 一致），供 Coordinator 聚合 cluster_pure_xfer_span_wall_sec
+  bool uplrc_join_xfer_timing_present = 2;
+  double uplrc_join_pure_xfer_sec = 3;
+  int64 uplrc_join_pure_xfer_start_unix_ms = 4;
+  int64 uplrc_join_pure_xfer_end_unix_ms = 5;
+}
+message GetReply {
+  bool getsuccess = 1;
+}
+message StripeAndBlockIDs{
+  int32 stripe_id = 1;
+  int32 group_id = 2;
+  string clientip = 3;
+  int32 clientport = 4;
+  repeated int32 block_ids = 5;
+  repeated string block_keys = 6;
+  repeated string datanodeips = 7;
+  repeated int32 datanodeports = 8;
+}
